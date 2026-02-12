@@ -324,6 +324,12 @@ namespace SymoCraft
            }
     }
 
+    void Chunk::Free() const
+    {
+        AmoMemory_Free(m_local_blocks);
+        AmoMemory_Free(m_vertex_data);
+    }
+
     void Chunk::GenerateRenderData()
     {
         //Clear old data

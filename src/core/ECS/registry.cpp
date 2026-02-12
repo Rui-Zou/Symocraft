@@ -24,7 +24,7 @@ namespace SymoCraft::ECS
         void Registry::Clear()
         {
             entities.clear();
-            Registry::Free();
+            Free();
             component_set.clear();
             component_set = std::vector<Internal::ComponentContainer>();
             debug_component_names.clear();

@@ -83,6 +83,7 @@ namespace SymoCraft {
         void GenerateTerrain();
         void GenerateVegetation();
         void GenerateRenderData();
+        void Free() const;
         void UpdateChunkLocalBlocks(const glm::vec3& block_world_coord);
 
     private:

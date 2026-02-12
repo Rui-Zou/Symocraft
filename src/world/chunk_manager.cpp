@@ -76,8 +76,7 @@ namespace SymoCraft{
             if (!chunk)
             {
                 Chunk new_chunk{};
-                new_chunk.m_local_blocks = (Block *)AmoMemory_Allocate(
-                        sizeof(Block) * k_chunk_length * k_chunk_width * k_chunk_height);
+                new_chunk.m_local_blocks = (Block *)AmoMemory_Allocate(sizeof(Block) * k_chunk_length * k_chunk_width * k_chunk_height);
                 new_chunk.m_chunk_coord = chunk_coord;
                 new_chunk.m_vertex_data = (BlockVertex3D *) AmoMemory_Allocate(sizeof(BlockVertex3D) * World::max_vertices_per_chunk);
                 new_chunk.m_vertex_count = 0;
@@ -132,6 +131,14 @@ namespace SymoCraft{
                     continue;
                 else
                     chunk_batch.AddVertex(pair.second.m_vertex_data, pair.second.m_vertex_count);
+        }
+
+        void FreeAllChunks()
+        {
+            for(auto &pair : chunks)
+                // if (pair.second.m_vertex_count != 0)
+                    pair.second.Free();
+
         }
     }
 }

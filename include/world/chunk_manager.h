@@ -37,6 +37,7 @@ namespace SymoCraft{
         void CreateChunk(const glm::ivec2& chunk_coord);
         void UpdateAllChunks();
         void LoadAllChunks();
+        void FreeAllChunks();
     }
 }
 #endif //SYMOCRAFT_CHUNK_MANAGER_H

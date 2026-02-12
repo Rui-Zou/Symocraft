@@ -107,7 +107,7 @@ namespace SymoCraft
             glm::vec3 start_pos{0.0f, 140.0f, 0.0f};
             auto &transform = registry.GetComponent<Transform>(World::GetPlayer());
             transform.position = start_pos;
-            Renderer::ReportStatus();
+            // Renderer::ReportStatus(); # WIP
 
             // -------------------------------------------------------------------
             // Render Loop
@@ -153,7 +153,9 @@ namespace SymoCraft
             Window& window = GetWindow();
             window.Destroy();
             Window::Free();
-
+            ChunkManager::FreeAllChunks();
+            Renderer::Free();
+            GetRegistry().Clear();
         }
 
         Window& GetWindow()

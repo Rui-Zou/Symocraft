@@ -1,8 +1,5 @@
 #include <MemoryAllocator/AmoBase.h>
 #include "core/application.h"
-#include "core/ECS/registry.h"
-#include "core/ECS/component.h"
-#include "core/global_thread_pool.h"
 
 int main()
 {
