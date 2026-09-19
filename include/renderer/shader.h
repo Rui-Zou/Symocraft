@@ -12,12 +12,8 @@ enum class ShaderType : uint8
 
 struct Shader
 {
-	uint32 shaderId{};
-	ShaderType m_type{};
-
-    Shader() = default;
-    Shader(const Shader&) = delete;
-    Shader& operator=(const Shader&) = delete;
+	uint32 shaderId;
+	ShaderType m_type;
 
 	bool Compile(ShaderType type, std::string_view shaderFilepath);
 	void Destroy();
