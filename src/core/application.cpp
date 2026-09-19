@@ -5,7 +5,6 @@
 #define STB_IMAGE_IMPLEMENTATION
 
 #include "core/application.h"
-#include "core/asset_paths.h"
 #include "core.h"
 #include "core/window.h"
 #include "renderer/texture.h"
@@ -18,10 +17,6 @@
 #include "core/ECS/component.h"
 #include "world/world.h"
 #include "playercontroller/playercontroller.h"
-#include "input/key_snapshot.h"
-#include <algorithm>
-#include <memory>
-#include <stdexcept>
 
 namespace SymoCraft
 {
@@ -45,68 +40,19 @@ namespace SymoCraft
         float delta_time = 0.016f;
 
 
-        static std::unique_ptr<Window> runtime_window;
-        static std::unique_ptr<Camera> camera;
-        static std::unique_ptr<ECS::Registry> runtime_registry;
-        static bool glfw_initialized = false;
-        static bool renderer_started = false;
-        static bool keyboard_reset_needed = false;
-
-        static void FocusCallback(GLFWwindow*, int focused)
-        {
-            if (!focused)
-            {
-                keyboard_reset_needed = true;
-                first_enter = true;
-            }
-        }
-
-        static void ClearStickyKeys(GLFWwindow* window)
-        {
-            // Do this after event polling: GLFW emits synthetic releases after the focus callback.
-            glfwSetInputMode(window, GLFW_STICKY_KEYS, GLFW_FALSE);
-            glfwSetInputMode(window, GLFW_STICKY_KEYS, GLFW_TRUE);
-            keyboard_reset_needed = false;
-        }
-
-        static glm::vec3 FindSpawnPosition()
-        {
-            // Prefer clear ground near the center rather than spawning inside terrain or a tree.
-            for (int radius = 0; radius <= 64; radius += 4)
-            {
-                for (int x = -radius; x <= radius; x += 4)
-                {
-                    for (int z = -radius; z <= radius; z += 4)
-                    {
-                        if (std::max(std::abs(x), std::abs(z)) != radius)
-                            continue;
-                        for (int y = k_chunk_height - 4; y >= 0; --y)
-                        {
-                            const Block block = ChunkManager::GetBlock({x, y, z});
-                            if (block.block_id == 9)
-                                break;
-                            if (!get_block(block.block_id).m_is_solid)
-                                continue;
-                            if (block.block_id >= 2 && block.block_id <= 5)
-                                return {x + 0.5f, y + 1.95f, z + 0.5f};
-                            break;
-                        }
-                    }
-                }
-            }
-            throw std::runtime_error("Cannot find a safe player spawn near the world center");
-        }
+        // Internal variables
+        // static GlobalThreadPool* global_thread_pool;
+        static Camera* camera;
 
         void Init()
         {
-            if (glfw_initialized)
-                throw std::logic_error("Application is already initialized");
             Window::Init();
-            glfw_initialized = true;
-            runtime_window.reset(Window::Create("SymoCraft"));
-            if (!runtime_window || !runtime_window->window_ptr)
-                throw std::runtime_error("Cannot create the game window");
-            runtime_registry = std::make_unique<ECS::Registry>();
+            Window& window = GetWindow();   // Get a reference pointer of the only Window
+            if (!window.window_ptr)
+            {
+                AmoLogger_Error("Error: Could not create a window. ");
+                return;
+            }
 
             // Initialize all other subsystems.
             ECS::Registry &registry = GetRegistry();
@@ -116,30 +62,26 @@ namespace SymoCraft
             registry.RegisterComponent<Character::CharacterComponent>("CharacterComponent");
             registry.RegisterComponent<Character::PlayerComponent>("PlayerComponent");
 
-            renderer_started = true;
             Renderer::Init();
             World::Init();
-            first_enter = true;
-            keyboard_reset_needed = false;
+
+            camera = GetCamera();
         }
 
-        void Run(unsigned int frame_limit)
+        void Run()
         {
+
+            std::cout << player << std::endl;
             Window& window = GetWindow();
-            auto* native_window = static_cast<GLFWwindow*>(window.window_ptr);
-            const double loading_start = glfwGetTime();
+            double previous_frame_time = glfwGetTime();
 
             stbi_set_flip_vertically_on_load(true);
-            const std::string texture_path = Assets::Resolve("textures/texture_atlas.png").string();
             TextureArray texture_array;
-            texture_array = texture_array.CreateAtlasSlice(texture_path, true);
-            ValidateBlockTextures(texture_array.layer_amount);
+            texture_array = texture_array.CreateAtlasSlice("../assets/textures/texture_atlas.png", true);
 
             glfwSetScrollCallback( (GLFWwindow *) window.window_ptr, MouseScrollCallBack);
             glfwSetCursorPosCallback((GLFWwindow *) window.window_ptr, MouseMovementCallBack);
             glfwSetInputMode((GLFWwindow*)window.window_ptr, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-            glfwSetInputMode(native_window, GLFW_STICKY_KEYS, GLFW_TRUE);
-            glfwSetWindowFocusCallback(native_window, FocusCallback);
 
             // Manual chunk generation for testing
             InitializeNoise();
@@ -147,92 +89,45 @@ namespace SymoCraft
                 for(int z = -World::chunk_radius; z <= World::chunk_radius; z++)
                     ChunkManager::CreateChunk({x, z});
 
+            for( auto chunk : ChunkManager::GetAllChunks() )
+            {
+                chunk.second.GenerateTerrain();
+                chunk.second.GenerateVegetation();
+            }
+
             ChunkManager::RearrangeChunkNeighborPointers();
-            for (auto& [coords, chunk] : ChunkManager::GetAllChunks())
-                chunk.GenerateTerrain();
-            for (auto& [coords, chunk] : ChunkManager::GetAllChunks())
-                chunk.GenerateVegetation();
 
             Report();
 
+            for(auto& pair : ChunkManager::GetAllChunks())
+                if( pair.second.state == ChunkState::Updated)
+                    AmoLogger_Log("Chunk (%d, %d) is skipped\n", pair.first.x, pair.first.y);
+
             ECS::Registry &registry = GetRegistry();
-            const glm::vec3 start_pos = FindSpawnPosition();
+            glm::vec3 start_pos{0.0f, 140.0f, 0.0f};
             auto &transform = registry.GetComponent<Transform>(World::GetPlayer());
             transform.position = start_pos;
-            TransformSystem::Update(registry);
-            Character::Player::SyncCamera(registry);
-            ChunkManager::UpdateAllChunks();
-
-            // Loading is not simulation time. Start the frame clock only after the initial mesh is ready.
-            Physics::ResetTiming();
-            double previous_frame_time = glfwGetTime();
-            bool paused = false;
-            unsigned int rendered_frames = 0;
-            std::cout << "[runtime] ready; chunks=" << ChunkManager::GetAllChunks().size()
-                      << "; loading_ms=" << (previous_frame_time - loading_start) * 1000.0
-                      << "; spawn=" << start_pos.x << ',' << start_pos.y << ',' << start_pos.z << std::endl;
+            // Renderer::ReportStatus(); # WIP
 
             // -------------------------------------------------------------------
             // Render Loop
             while (!window.ShouldClose())
             {
-                window.PollInt();
-                if (window.ShouldClose())
-                    break;
-                const double current_frame_time = glfwGetTime();
-                auto& character = registry.GetComponent<Character::CharacterComponent>(World::GetPlayer());
-                auto& body = registry.GetComponent<Physics::RigidBody>(World::GetPlayer());
-                const bool inactive = !glfwGetWindowAttrib(native_window, GLFW_FOCUSED) ||
-                                      glfwGetWindowAttrib(native_window, GLFW_ICONIFIED) ||
-                                      window.width <= 0 || window.height <= 0;
-                if (inactive && frame_limit == 0)
-                {
-                    ClearStickyKeys(native_window);
-                    character.movement_axis = glm::vec3(0.0f);
-                    character.apply_jump_force = false;
-                    body.velocity.x = body.velocity.z = 0.0f;
-                    Physics::ResetTiming();
-                    first_enter = true;
-                    paused = true;
-                    previous_frame_time = current_frame_time;
-                    glfwWaitEventsTimeout(0.05);
-                    continue;
-                }
-                if (paused || keyboard_reset_needed)
-                {
-                    ClearStickyKeys(native_window);
-                    character.movement_axis = glm::vec3(0.0f);
-                    character.apply_jump_force = false;
-                    body.velocity.x = body.velocity.z = 0.0f;
-                    Physics::ResetTiming();
-                    first_enter = true;
-                    paused = true;
-                }
-                delta_time = paused ? 0.0f : static_cast<float>(std::clamp(current_frame_time - previous_frame_time, 0.0, 0.1));
-                paused = false;
-                previous_frame_time = current_frame_time;
+                double current_frame_time = glfwGetTime();
+                delta_time = (float)(current_frame_time - previous_frame_time);
 
                 block_place_debounce -= delta_time;
                 block_change_debounce -= delta_time;
 
                 // Temporary Input Process Function
-                processInput(native_window);
-                if (window.ShouldClose())
-                    break;
-                TransformSystem::Update(registry);
-                Character::Player::Update(registry);
-                Physics::Update(registry, delta_time);
-                if (transform.position.y < -8.0f)
-                {
-                    transform.position = FindSpawnPosition();
-                    body.zero_forces();
-                    body.on_ground = false;
-                    character.is_jumping = false;
-                    Physics::ResetTiming();
-                    std::cout << "[runtime] returned player to safe spawn" << std::endl;
-                }
-                Character::Player::SyncCamera(registry);
+                processInput((GLFWwindow*)GetWindow().window_ptr);
                 PlayerController::DoRayCast(registry, window);
+
+                //::Registry &registry = GetRegistry();
+
+                TransformSystem::Update(GetRegistry());
+                Physics::Update(GetRegistry());
+                Character::Player::Update(GetRegistry());
 
                 ChunkManager::UpdateAllChunks();
                 ChunkManager::LoadAllChunks();
@@ -241,60 +136,44 @@ namespace SymoCraft
                 Renderer::Render();
 
                 window.SwapBuffers();
-                ++rendered_frames;
-                if (frame_limit != 0 && rendered_frames >= frame_limit)
-                    window.Close();
+                window.PollInt();
+
+                previous_frame_time = current_frame_time;
             }
-            std::cout << "[runtime] loop finished; rendered_frames=" << rendered_frames
-                      << "; player=" << transform.position.x << ',' << transform.position.y << ',' << transform.position.z
-                      << std::endl;
         }
 
         void Free()
         {
+            // Free assets
+
+            // Free resources
+            // global_thread_pool->Free();
+            // delete global_thread_pool;
+
+            Window& window = GetWindow();
+            window.Destroy();
+            Window::Free();
             ChunkManager::FreeAllChunks();
-            if (renderer_started)
-            {
-                Renderer::Free();
-                renderer_started = false;
-            }
-            camera.reset();
-            if (runtime_registry)
-            {
-                runtime_registry->Clear();
-                runtime_registry.reset();
-            }
-            if (runtime_window)
-            {
-                runtime_window->Destroy();
-                runtime_window.reset();
-            }
-            if (glfw_initialized)
-            {
-                Window::Free();
-                glfw_initialized = false;
-            }
+            Renderer::Free();
+            GetRegistry().Clear();
         }
 
         Window& GetWindow()
         {
-            if (!runtime_window)
-                throw std::logic_error("Game window is not initialized");
-            return *runtime_window;
+            static Window* window = Window::Create("SymoCraft");
+            return *window;
         }
 
         Camera* GetCamera()
         {
-            if (!camera)
-                camera = std::make_unique<Camera>(static_cast<float>(GetWindow().width), static_cast<float>(GetWindow().height));
-            return camera.get();
+            static auto* camera = new Camera((float)GetWindow().width, (float)GetWindow().height);
+            return camera;
         }
 
         ECS::Registry &GetRegistry()
         {
-            if (!runtime_registry)
-                throw std::logic_error("Game registry is not initialized");
-            return *runtime_registry;
+            static auto* registry = new ECS::Registry;
+            return *registry;
         }
 /*
         GlobalThreadPool& GetGlobalThreadPool()
@@ -304,11 +183,6 @@ namespace SymoCraft
 */
         void MouseMovementCallBack(GLFWwindow* window, double xpos_in, double ypos_in)
         {
-            if (!glfwGetWindowAttrib(window, GLFW_FOCUSED))
-            {
-                first_enter = true;
-                return;
-            }
             static float last_x = 0;       // last x position of cursor
             static float last_y = 0;       // last y position of cursor
             ECS::Registry &registry = Application::GetRegistry();
@@ -349,16 +223,7 @@ namespace SymoCraft
 
         void processInput(GLFWwindow* window)
         {
-            using KeySampling::Control;
-            constexpr std::array<int, KeySampling::Count> native_keys{
-                GLFW_KEY_ESCAPE, GLFW_KEY_LEFT_SHIFT, GLFW_KEY_CAPS_LOCK, GLFW_KEY_LEFT_CONTROL,
-                GLFW_KEY_W, GLFW_KEY_S, GLFW_KEY_D, GLFW_KEY_A, GLFW_KEY_SPACE, GLFW_KEY_E, GLFW_KEY_Q
-            };
-            const auto keys = KeySampling::Capture([window, &native_keys](Control control)
-            {
-                return glfwGetKey(window, native_keys[static_cast<std::size_t>(control)]) == GLFW_PRESS;
-            });
-            if (keys.Down(Control::Exit))
+            if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
                 glfwSetWindowShouldClose(window, true);
 
             ECS::Registry &registry = GetRegistry();
@@ -369,15 +234,14 @@ namespace SymoCraft
             // process input for camera moving
 
 
-            player_com.is_running = keys.Down(Control::Run);
-            player_com.movement_axis.y = 0.0f;
+            player_com.is_running = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
 
-            if (keys.Down(Control::Sensor))
+            if (glfwGetKey(window, GLFW_KEY_CAPS_LOCK) == GLFW_PRESS)
             {
                 rigid_body.is_sensor = true;
                 rigid_body.use_gravity = false;
                 player_com.movement_axis.y =
-                        keys.Down(Control::Descend)
+                        glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS
                         ? -1.0f
                         : 0.0f;
             }
@@ -388,20 +252,20 @@ namespace SymoCraft
             }
 
             player_com.movement_axis.x =
-                    keys.Down(Control::Forward)
+                    glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS
                     ? 1.0f
-                    :keys.Down(Control::Backward)
+                    :glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS
                       ? -1.0f
                       : 0.0f;
             player_com.movement_axis.z =
-                    keys.Down(Control::Right)
+                    glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS
                     ? 1.0f
                     :
-                    keys.Down(Control::Left)
+                    glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS
                       ? -1.0f
                       : 0.0f;
 
-            if (keys.Down(Control::Jump))
+            if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
             {
                 if (!player_com.is_jumping && rigid_body.on_ground)
                 {
@@ -409,7 +273,7 @@ namespace SymoCraft
                 }
             }
 
-            if (keys.Down(Control::NextBlock) && block_change_debounce <= 0.0f)
+            if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS && block_change_debounce <= 0.0f)
             {
                 new_block_id++;
                 if (new_block_id > kNumBlocks)
@@ -418,7 +282,7 @@ namespace SymoCraft
                 PlayerController::DisplayCurrentBlockName();
             }
 
-            if (keys.Down(Control::PreviousBlock) && block_change_debounce <= 0.0f)
+            if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS && block_change_debounce <= 0.0f)
             {
                 new_block_id--;
                 if (new_block_id < 0)

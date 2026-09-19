@@ -5,7 +5,6 @@
 #ifndef SYMOCRAFT_PLAYERCONTROLLER_H
 #define SYMOCRAFT_PLAYERCONTROLLER_H
 #include "core.h"
-#include <array>
 
 namespace SymoCraft
 {
@@ -23,7 +22,7 @@ namespace SymoCraft
     class Window;
     namespace PlayerController
     {
-        inline constexpr std::array<uint16, 8> kBlockInventor = {2, 3, 4, 5, 6, 7, 10, 11};
+        static const uint16 kBlockInventor[10] = {2, 3, 4, 5, 6, 7, 10, 11};
         void DoRayCast(ECS::Registry &registry, Window &window);
         void DisplayCurrentBlockName();
     }

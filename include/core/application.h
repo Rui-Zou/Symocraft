@@ -24,7 +24,7 @@ namespace SymoCraft
         void Init();
 
         // Run application
-        void Run(unsigned int frame_limit = 0);
+        void Run();
 
         // Free application
         void Free();
